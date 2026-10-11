@@ -1,0 +1,7 @@
+node_modules/
+dist/
+_solvestack_reference/
+_star_battle_studio_reference/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
