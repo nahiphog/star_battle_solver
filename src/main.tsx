@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Check, Clipboard, Download, RotateCcw } from "lucide-react";
 import { gridString, matrixString, solveStarBattleOne, solveWithLogicalTechniques, type StarBattleSolution } from "./lib/starBattle";
@@ -19,7 +19,7 @@ const DEFAULT_REGIONS = [
 const cloneDefaultRegions = () => DEFAULT_REGIONS.map((row) => [...row]);
 type Technique = { name: string; tally: number; meaning: string };
 type Coordinate = [number, number];
-type WalkthroughHighlights = { rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[] };
+type WalkthroughHighlights = { rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[] };
 type WalkthroughStep = { technique: string; detail: string; highlights?: WalkthroughHighlights };
 type WalkthroughSnapshot = { stars: StarBattleSolution; deductions: StarBattleSolution };
 type Page = "backtracking" | "techniques" | "technique-list";
@@ -36,17 +36,17 @@ const DEFAULT_TECHNIQUES: Technique[] = [
 ];
 const DEFAULT_WALKTHROUGH: WalkthroughStep[] = [
   { technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." },
-  { technique: "Forced star", detail: "R3C3 is the only possible star cell in the yellow region. Place the star; its row, column, and touching neighbours account for 16 new Xs.", highlights: { regions: [5], cells: [[2, 2]] } },
-  { technique: "Full-unit visibility", detail: "Column 1 needs one star, and its remaining candidate belongs to the left blue region. The other six still-open cells of that blue region cannot contain a star.", highlights: { columns: [0], regions: [1] } },
-  { technique: "Full-unit visibility", detail: "Column 7 needs one star in the green region. The four cells below the green region in that column are therefore Xs.", highlights: { columns: [6], regions: [3] } },
-  { technique: "Full-unit visibility", detail: "Column 6 needs one star in the bottom-right light-blue region. The four remaining cells above that pair are Xs.", highlights: { columns: [5], regions: [7] } },
-  { technique: "Full-unit visibility", detail: "The brown region's star must be in row 1. The two other remaining brown candidates in that row are Xs.", highlights: { rows: [0], regions: [2] } },
-  { technique: "Forced star", detail: "R2C7 is now the only remaining cell in the green region. Place the star; two additional candidates are ruled out.", highlights: { regions: [3], cells: [[1, 6]] } },
-  { technique: "Forced star", detail: "R5C2 is now the only remaining cell in the orange region. Place the star; six additional candidates are ruled out.", highlights: { regions: [4], cells: [[4, 1]] } },
-  { technique: "Forced star", detail: "R4C5 is now the only remaining cell in the red region. Place the star; one additional candidate is ruled out.", highlights: { regions: [6], cells: [[3, 4]] } },
-  { technique: "Forced star", detail: "R1C4 is now the only remaining cell in the brown region, so place the star.", highlights: { regions: [2], cells: [[0, 3]] } },
-  { technique: "Forced star", detail: "R7C1 is now the only remaining cell in the left blue region. Place the star; one additional candidate is ruled out.", highlights: { regions: [1], cells: [[6, 0]] } },
-  { technique: "Forced star", detail: "R6C6 is the final remaining cell in the right light-blue region. Place the star: the puzzle is solved.", highlights: { regions: [7], cells: [[5, 5]] } },
+  { technique: "Forced star", detail: "R3C3 is the only possible star cell in region [[region:5]]. Place the star; 16 Xs are added.", highlights: { regions: [5], cells: [[2, 2]] } },
+  { technique: "Full-unit visibility", detail: "Column 1 needs one star, and its remaining candidate belongs to region [[region:1]]. 6 Xs are added.", highlights: { columns: [0], regions: [1] } },
+  { technique: "Full-unit visibility", detail: "Column 7 needs one star in region [[region:3]]. 4 Xs are added.", highlights: { columns: [6], regions: [3] } },
+  { technique: "Full-unit visibility", detail: "Column 6 needs one star in region [[region:7]]. 4 Xs are added.", highlights: { columns: [5], regions: [7] } },
+  { technique: "Full-unit visibility", detail: "The star in region [[region:2]] must be in row 1. 2 Xs are added.", highlights: { rows: [0], regions: [2] } },
+  { technique: "Forced star", detail: "R2C7 is now the only remaining cell in region [[region:3]]. Place the star; 2 Xs are added.", highlights: { regions: [3], cells: [[1, 6]] } },
+  { technique: "Forced star", detail: "R5C2 is now the only remaining cell in region [[region:4]]. Place the star; 6 Xs are added.", highlights: { regions: [4], cells: [[4, 1]] } },
+  { technique: "Forced star", detail: "R4C5 is now the only remaining cell in region [[region:6]]. Place the star; 1 X is added.", highlights: { regions: [6], cells: [[3, 4]] } },
+  { technique: "Forced star", detail: "R1C4 is now the only remaining cell in region [[region:2]], so place the star.", highlights: { regions: [2], cells: [[0, 3]] } },
+  { technique: "Forced star", detail: "R7C1 is now the only remaining cell in region [[region:1]]. Place the star; 1 X is added.", highlights: { regions: [1], cells: [[6, 0]] } },
+  { technique: "Forced star", detail: "R6C6 is the final remaining cell in region [[region:7]]. Place the star: the puzzle is solved.", highlights: { regions: [7], cells: [[5, 5]] } },
 ];
 const DEFAULT_SNAPSHOTS: WalkthroughSnapshot[] = [
   { stars: [], deductions: [] },
@@ -98,7 +98,21 @@ function eliminatedCells(regions: number[][], snapshot: WalkthroughSnapshot) {
   return eliminated;
 }
 
-function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights }: { regions: number[][]; snapshot: WalkthroughSnapshot; previousSnapshot?: WalkthroughSnapshot; highlights?: WalkthroughHighlights }) {
+function WalkthroughDetail({ detail }: { detail: string }): ReactNode {
+  const pieces: ReactNode[] = [];
+  const token = /\[\[region:(\d+)\]\]/g;
+  let start = 0;
+  for (const match of detail.matchAll(token)) {
+    pieces.push(detail.slice(start, match.index));
+    const region = Number(match[1]);
+    pieces.push(<span key={`${match.index}-${region}`} className="region-swatch" style={{ background: PALETTE[(region - 1) % PALETTE.length] }} aria-label="highlighted region" title="Highlighted region" />);
+    start = (match.index ?? 0) + match[0].length;
+  }
+  pieces.push(detail.slice(start));
+  return pieces;
+}
+
+function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights, technique }: { regions: number[][]; snapshot: WalkthroughSnapshot; previousSnapshot?: WalkthroughSnapshot; highlights?: WalkthroughHighlights; technique?: string }) {
   const stars = new Set(snapshot.stars.map(([row, column]) => `${row}:${column}`));
   const priorStars = new Set((previousSnapshot?.stars ?? []).map(([row, column]) => `${row}:${column}`));
   const eliminated = eliminatedCells(regions, snapshot);
@@ -107,16 +121,20 @@ function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights }: { 
   const highlightedColumns = new Set(highlights?.columns ?? []);
   const highlightedRegions = new Set(highlights?.regions ?? []);
   const highlightedCells = new Set((highlights?.cells ?? []).map(([row, column]) => `${row}:${column}`));
+  const reframedCells = new Set((highlights?.reframedCells ?? []).map(([row, column]) => `${row}:${column}`));
   return <div className="walkthrough-board">
     <div className="column-arrows" style={{ gridTemplateColumns: `repeat(${regions.length}, 1fr)` }} aria-hidden="true">{[...highlightedColumns].map((column) => <span key={column} style={{ gridColumn: column + 1 }}>↓</span>)}</div>
+    <div className="column-labels" style={{ gridTemplateColumns: `repeat(${regions.length}, 1fr)` }} aria-label="Column numbers">{regions[0].map((_, column) => <span key={column}>{column + 1}</span>)}</div>
     <div className="row-arrows" style={{ gridTemplateRows: `repeat(${regions.length}, 1fr)` }} aria-hidden="true">{[...highlightedRows].map((row) => <span key={row} style={{ gridRow: row + 1 }}>→</span>)}</div>
+    <div className="row-labels" style={{ gridTemplateRows: `repeat(${regions.length}, 1fr)` }} aria-label="Row numbers">{regions.map((_, row) => <span key={row}>{row + 1}</span>)}</div>
     <div className="walkthrough-grid" style={{ gridTemplateColumns: `repeat(${regions.length}, 1fr)` }} aria-label="Walkthrough board state">
       {regions.flatMap((row, r) => row.map((region, c) => {
       const key = `${r}:${c}`;
       const isStar = stars.has(key);
       const isNew = isStar ? !priorStars.has(key) : eliminated.has(key) && !priorEliminated.has(key);
       const isHighlighted = highlightedRows.has(r) || highlightedColumns.has(c) || highlightedRegions.has(region) || highlightedCells.has(key);
-      return <div key={key} className={`cell snapshot-cell ${isHighlighted ? "highlighted-unit" : ""} ${isStar || eliminated.has(key) ? isNew ? "new-mark" : "past-mark" : ""}`} style={{ background: PALETTE[(region - 1) % PALETTE.length] }}>{isStar ? "★" : eliminated.has(key) ? "×" : ""}</div>;
+      const isReframedCell = reframedCells.has(key);
+      return <div key={key} className={`cell snapshot-cell ${isHighlighted ? "highlighted-unit" : ""} ${isReframedCell ? "reframed-cell" : ""} ${isStar || eliminated.has(key) ? isNew ? "new-mark" : "past-mark" : ""}`} style={{ background: PALETTE[(region - 1) % PALETTE.length] }}>{isReframedCell && <svg className="squiggle-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Squiggly reframed-region outline"><path d="M4 8 Q12 2 20 8 T36 8 T52 8 T68 8 T84 8 T96 8 L96 92 Q88 98 80 92 T64 92 T48 92 T32 92 T16 92 T4 92 L4 8" /></svg>}{isStar ? "★" : eliminated.has(key) ? "×" : ""}</div>;
       }))}
     </div>
   </div>;
@@ -136,7 +154,7 @@ export default function App() {
   const [walkthroughProgress, setWalkthroughProgress] = useState(0);
   const regionCount = useMemo(() => new Set(regions.flat().filter(Boolean)).size, [regions]);
   const walkthroughTally = useMemo(() => [...walkthrough.reduce((counts, step) => {
-    if (step.technique !== "Initial grid") counts.set(step.technique, (counts.get(step.technique) ?? 0) + 1);
+    if (step.technique !== "Initial grid") for (const technique of step.technique.split(" + ")) counts.set(technique, (counts.get(technique) ?? 0) + 1);
     return counts;
   }, new Map<string, number>()).entries()], [walkthrough]);
   const navigate = (nextPage: Page) => { window.history.pushState({}, "", pageToRoute[nextPage]); setPage(nextPage); };
@@ -194,7 +212,7 @@ export default function App() {
       return;
     }
     const logicalSteps = solveWithLogicalTechniques(regions, techniques.map((technique) => technique.name));
-    const steps: WalkthroughStep[] = [{ technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." }, ...logicalSteps.map((step) => ({ technique: step.technique, detail: step.detail, highlights: { rows: step.rows, columns: step.columns, regions: step.regions, cells: step.cells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined } }))];
+    const steps: WalkthroughStep[] = [{ technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." }, ...logicalSteps.map((step) => ({ technique: step.technique, detail: step.detail, highlights: { rows: step.rows, columns: step.columns, regions: step.regions, cells: step.cells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedCells: step.reframedCells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined } }))];
     setWalkthrough(steps);
     setWalkthroughSnapshots([{ stars: [], deductions: [] }, ...logicalSteps.map((step) => ({ stars: step.stars, deductions: step.xs }))]);
     setWalkthroughProgress(0);
@@ -244,7 +262,6 @@ export default function App() {
     {page === "techniques" && <section className="technique-page">
       <h2>Solve with given techniques</h2>
       <p>The solver uses the saved priority order from the Technique list page. It records only deductions it can justify.</p>
-      {walkthrough.length > 0 && <div className="walkthrough"><h3>Interactive solution walkthrough</h3><div className="technique-tally" aria-label="Techniques used"><strong>Techniques used</strong>{walkthroughTally.map(([technique, count]) => <span key={technique}>{technique}: <b>{count}</b></span>)}</div><div className="walkthrough-player"><WalkthroughGrid regions={regions} snapshot={walkthroughSnapshots[walkthroughProgress] ?? { stars: [], deductions: [] }} previousSnapshot={walkthroughProgress > 0 ? walkthroughSnapshots[walkthroughProgress - 1] : undefined} highlights={walkthrough[walkthroughProgress].highlights} /><div className="walkthrough-controls"><p className="step-count">Step {walkthroughProgress} of {walkthrough.length - 1}</p><div className="step-buttons" aria-label="Walkthrough navigation"><button onClick={() => setWalkthroughProgress(0)} disabled={walkthroughProgress === 0} aria-label="Go to step 0">&lt;&lt;</button><button onClick={() => setWalkthroughProgress((current) => Math.max(0, current - 1))} disabled={walkthroughProgress === 0} aria-label="Go to previous step">&lt;</button><button onClick={() => setWalkthroughProgress((current) => Math.min(walkthrough.length - 1, current + 1))} disabled={walkthroughProgress === walkthrough.length - 1} aria-label="Go to next step">&gt;</button><button onClick={() => setWalkthroughProgress(walkthrough.length - 1)} disabled={walkthroughProgress === walkthrough.length - 1} aria-label="Go to last step">&gt;&gt;</button></div><article><strong>“{walkthrough[walkthroughProgress].technique}”</strong><p>{walkthrough[walkthroughProgress].detail}</p></article><p className="legend"><span className="new-mark-sample">★ ×</span> added this step &nbsp; <span className="past-mark-sample">★ ×</span> from an earlier step &nbsp; <span className="highlight-sample">highlighted</span> unit</p></div></div></div>}
     </section>}
     {page === "technique-list" && <section className="technique-page">
       <h2>Technique list</h2>
@@ -280,6 +297,20 @@ export default function App() {
       </div>
       <p className={`status ${solutions?.length === 0 ? "error" : ""}`}>{message}</p>
     </section>
+
+    {page === "techniques" && walkthrough.length > 0 && <section className="walkthrough technique-page">
+      <h3>Interactive solution walkthrough</h3>
+      <div className="technique-tally" aria-label="Techniques used"><strong>Techniques used</strong>{walkthroughTally.map(([technique, count]) => <span key={technique}>{technique}: <b>{count}</b></span>)}</div>
+      <div className="walkthrough-player">
+        <WalkthroughGrid regions={regions} snapshot={walkthroughSnapshots[walkthroughProgress] ?? { stars: [], deductions: [] }} previousSnapshot={walkthroughProgress > 0 ? walkthroughSnapshots[walkthroughProgress - 1] : undefined} highlights={walkthrough[walkthroughProgress].highlights} technique={walkthrough[walkthroughProgress].technique} />
+        <div className="walkthrough-controls">
+          <p className="step-count">Step {walkthroughProgress} of {walkthrough.length - 1}</p>
+          <div className="step-buttons" aria-label="Walkthrough navigation"><button onClick={() => setWalkthroughProgress(0)} disabled={walkthroughProgress === 0} aria-label="Go to step 0">&lt;&lt;</button><button onClick={() => setWalkthroughProgress((current) => Math.max(0, current - 1))} disabled={walkthroughProgress === 0} aria-label="Go to previous step">&lt;</button><button onClick={() => setWalkthroughProgress((current) => Math.min(walkthrough.length - 1, current + 1))} disabled={walkthroughProgress === walkthrough.length - 1} aria-label="Go to next step">&gt;</button><button onClick={() => setWalkthroughProgress(walkthrough.length - 1)} disabled={walkthroughProgress === walkthrough.length - 1} aria-label="Go to last step">&gt;&gt;</button></div>
+          <article><strong>“{walkthrough[walkthroughProgress].technique}”</strong><p><WalkthroughDetail detail={walkthrough[walkthroughProgress].detail} /></p></article>
+          <p className="legend"><span className="new-mark-sample">★ ×</span> added this step &nbsp; <span className="past-mark-sample">★ ×</span> from an earlier step &nbsp; <span className="highlight-sample">highlighted</span> unit</p>
+        </div>
+      </div>
+    </section>}
 
     <section className="exports" aria-label="Exports">
       <h2>Export</h2>

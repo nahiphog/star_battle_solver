@@ -6,7 +6,7 @@
  */
 export type Coordinate = readonly [row: number, column: number];
 export type StarBattleSolution = Coordinate[];
-export type LogicalStep = { technique: string; detail: string; stars: StarBattleSolution; xs: StarBattleSolution; rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[] };
+export type LogicalStep = { technique: string; detail: string; stars: StarBattleSolution; xs: StarBattleSolution; rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[] };
 
 export function solveStarBattleOne(regions: number[][], maxSolutions = 2): StarBattleSolution[] {
   const size = regions.length;
@@ -117,9 +117,9 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
   };
   const unitCandidates = () => {
     const units: { name: string; kind: "row" | "column" | "region"; id: number; cells: Coordinate[] }[] = [];
-    for (let row = 0; row < size; row += 1) if (!hasStar((r) => r === row)) units.push({ name: `row ${row + 1}`, kind: "row", id: row, cells: candidates((r) => r === row) });
-    for (let column = 0; column < size; column += 1) if (!hasStar((_, c) => c === column)) units.push({ name: `column ${column + 1}`, kind: "column", id: column, cells: candidates((_, c) => c === column) });
-    for (const region of regionIds) if (!hasStar((r, c) => regions[r][c] === region)) units.push({ name: `region ${region}`, kind: "region", id: region, cells: candidates((r, c) => regions[r][c] === region) });
+    for (const region of regionIds) if (!hasStar((r, c) => regions[r][c] === region)) units.push({ name: `region [[region:${region}]]`, kind: "region", id: region, cells: candidates((r, c) => regions[r][c] === region) });
+    for (let row = 0; row < size; row += 1) if (!hasStar((r) => r === row)) units.push({ name: `Row ${row + 1}`, kind: "row", id: row, cells: candidates((r) => r === row) });
+    for (let column = 0; column < size; column += 1) if (!hasStar((_, c) => c === column)) units.push({ name: `Column ${column + 1}`, kind: "column", id: column, cells: candidates((_, c) => c === column) });
     return units;
   };
   const viableWith = (assumed: Coordinate) => {
@@ -148,6 +148,10 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
     return row === targetRow || column === targetColumn || regions[row][column] === regions[targetRow][targetColumn] || (Math.abs(row - targetRow) <= 1 && Math.abs(column - targetColumn) <= 1);
   };
   const coordinateList = (cells: Coordinate[]) => cells.map(([row, column]) => `R${row + 1}C${column + 1}`).join(", ");
+  const xAdded = (count: number) => `${count} ${count === 1 ? "X is" : "Xs are"} added.`;
+  type ReframedUnit = { key: string; name: string; cells: Coordinate[]; rows: number[]; columns: number[] };
+  const reframedUnits: ReframedUnit[] = [];
+  const frameKey = (cells: Coordinate[]) => cells.map(([row, column]) => key(row, column)).sort().join("|");
   const steps: LogicalStep[] = [];
   for (let guard = 0; guard < size * size * 3; guard += 1) {
     const units = unitCandidates();
@@ -156,7 +160,7 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
     const forcedUnitOrder = { region: 0, row: 1, column: 2 } as const;
     for (const unit of units.filter((item) => item.cells.length === 1).sort((left, right) => forcedUnitOrder[left.kind] - forcedUnitOrder[right.kind])) {
       const [row, column] = unit.cells[0];
-      moves.push({ rank: priority("Forced star"), execute: () => { place(row, column); const state = snapshot(); return { technique: "Forced star", detail: `R${row + 1}C${column + 1} is the only remaining candidate in ${unit.name}, so it must contain a star.`, ...state, rows: unit.kind === "row" ? [unit.id] : [], columns: unit.kind === "column" ? [unit.id] : [], regions: unit.kind === "region" ? [unit.id] : [], cells: [[row, column]] }; } });
+      moves.push({ rank: priority("Forced star"), execute: () => { const before = xs.size; place(row, column); const state = snapshot(); return { technique: "Forced star", detail: `R${row + 1}C${column + 1} is the only remaining candidate in ${unit.name}, so it must contain a star. ${xAdded(xs.size - before)}`, ...state, rows: unit.kind === "row" ? [unit.id] : [], columns: unit.kind === "column" ? [unit.id] : [], regions: unit.kind === "region" ? [unit.id] : [], cells: [[row, column]] }; } });
     }
     for (const source of units) for (const target of units) {
       if (source === target || !source.cells.length || !target.cells.length) continue;
@@ -172,7 +176,7 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
         const eliminations = [...new Map([...outside, ...seenByAll].map((cell) => [key(cell[0], cell[1]), cell])).values()];
         eliminations.forEach(([row, column]) => addX(row, column));
         const state = snapshot();
-        return { technique: "Full-unit visibility", detail: `${source.name} must place its star inside ${target.name}, in ${coordinateList(source.cells)}. Every other cell that sees all of those candidates is an X: ${coordinateList(eliminations)}.`, ...state, rows: [source, target].filter((u) => u.kind === "row").map((u) => u.id), columns: [source, target].filter((u) => u.kind === "column").map((u) => u.id), regions: [source, target].filter((u) => u.kind === "region").map((u) => u.id), cells: eliminations };
+        return { technique: "Full-unit visibility", detail: `${source.name} must place its star inside ${target.name}, in ${coordinateList(source.cells)}. ${xAdded(eliminations.length)}`, ...state, rows: [source, target].filter((u) => u.kind === "row").map((u) => u.id), columns: [source, target].filter((u) => u.kind === "column").map((u) => u.id), regions: [source, target].filter((u) => u.kind === "region").map((u) => u.id), cells: eliminations };
       } });
     }
     for (const source of units) {
@@ -185,8 +189,21 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
       moves.push({ rank: priority("Full-unit visibility"), execute: () => {
         visibleCells.forEach(([row, column]) => addX(row, column));
         const state = snapshot();
-        return { technique: "Full-unit visibility", detail: `${source.name} must contain its star in ${coordinateList(source.cells)}. ${coordinateList(visibleCells)} see${visibleCells.length === 1 ? "s" : ""} every remaining candidate, so ${visibleCells.length === 1 ? "it is" : "they are"} X${visibleCells.length === 1 ? "" : "s"}.`, ...state, rows: source.kind === "row" ? [source.id] : [], columns: source.kind === "column" ? [source.id] : [], regions: source.kind === "region" ? [source.id] : [], cells: visibleCells };
+        const added = `${visibleCells.length} ${visibleCells.length === 1 ? "X is" : "Xs are"} added ${visibleCells.length === 1 ? "as it sees" : "as they each see"} all these cells.`;
+        return { technique: "Full-unit visibility", detail: `${source.name} must contain its star in one of the cells (${coordinateList(source.cells)}). ${added}`, ...state, rows: source.kind === "row" ? [source.id] : [], columns: source.kind === "column" ? [source.id] : [], regions: source.kind === "region" ? [source.id] : [], cells: visibleCells };
       } });
+    }
+    for (const source of units.filter((unit) => unit.kind === "row" || unit.kind === "column")) {
+      if (source.cells.length !== 2 || new Set(source.cells.map(([row, column]) => regions[row][column])).size < 2) continue;
+      const derivedKey = frameKey(source.cells);
+      if (reframedUnits.some((unit) => unit.key === derivedKey)) continue;
+      reframedUnits.push({
+        key: derivedKey,
+        name: `the reframed region formed by ${coordinateList(source.cells)}`,
+        cells: source.cells,
+        rows: source.kind === "row" ? [source.id] : [],
+        columns: source.kind === "column" ? [source.id] : [],
+      });
     }
     const addLineRegionAccounting = (kind: "row" | "column") => {
       const lines = units.filter((unit) => unit.kind === kind);
@@ -194,16 +211,32 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
       const inspectSelection = (selected: typeof lines) => {
         const selectedIds = new Set(selected.map((line) => line.id));
         const containedRegions = regionUnits.filter((region) => region.cells.length > 0 && region.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
-        if (containedRegions.length !== selected.length) return;
+        const containedFrames = reframedUnits.filter((frame) => !frame.cells.some(([row, column]) => stars.has(key(row, column))) && frame.cells.some(([row, column]) => canStar(row, column)) && frame.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
+        if (containedRegions.length + containedFrames.length !== selected.length) return;
+        const occupiedLockedCells = new Set<string>();
+        const lockedUnits = [...containedRegions, ...containedFrames];
+        for (const unit of lockedUnits) {
+          for (const [row, column] of unit.cells) {
+            const cellKey = key(row, column);
+            if (occupiedLockedCells.has(cellKey)) return;
+            occupiedLockedCells.add(cellKey);
+          }
+        }
         const lockedRegionIds = new Set(containedRegions.map((region) => region.id));
-        const eliminations = selected.flatMap((line) => line.cells).filter(([row, column]) => !lockedRegionIds.has(regions[row][column]));
+        const lockedFrameCells = new Set(containedFrames.flatMap((frame) => frame.cells.map(([row, column]) => key(row, column))));
+        const eliminations = selected.flatMap((line) => line.cells).filter(([row, column]) => !lockedRegionIds.has(regions[row][column]) && !lockedFrameCells.has(key(row, column)));
         if (!eliminations.length) return;
-        moves.push({ rank: priority("Line–region accounting"), execute: () => {
+        const usesReframedRegion = containedFrames.length > 0;
+        moves.push({ rank: usesReframedRegion ? Math.max(priority("Line–region accounting"), priority("Reframed regions (squiggly regions)")) : priority("Line–region accounting"), execute: () => {
           eliminations.forEach(([row, column]) => addX(row, column));
           const state = snapshot();
           const lineNames = selected.map((line) => line.name).join(" and ");
-          const regionNames = containedRegions.map((region) => region.name).join(" and ");
-          return { technique: "Line–region accounting", detail: `${lineNames} contain ${selected.length} stars in total. ${regionNames} each require one star and can only place them in these lines, so every remaining candidate there is an X: ${coordinateList(eliminations)}.`, ...state, rows: kind === "row" ? selected.map((line) => line.id) : [], columns: kind === "column" ? selected.map((line) => line.id) : [], regions: containedRegions.map((region) => region.id), cells: eliminations };
+          const lockedNames = [...containedRegions.map((region) => region.name), ...containedFrames.map((frame) => frame.name)].join(" and ");
+          const technique = usesReframedRegion ? "Reframed regions (squiggly regions) + Line–region accounting" : "Line–region accounting";
+          const detail = usesReframedRegion
+            ? `A reframed region is formed by ${containedFrames.map((frame) => coordinateList(frame.cells)).join(" and ")}. ${lineNames} contain ${selected.length} stars in total. ${lockedNames} are ${selected.length} non-overlapping one-star units within these lines. ${xAdded(eliminations.length)}`
+            : `${lineNames} contain ${selected.length} stars in total. ${lockedNames} each require one star and can only place them in these lines. ${xAdded(eliminations.length)}`;
+          return { technique, detail, ...state, rows: kind === "row" ? selected.map((line) => line.id) : [], columns: kind === "column" ? selected.map((line) => line.id) : [], regions: containedRegions.map((region) => region.id), cells: eliminations, reframedCells: containedFrames.flatMap((frame) => frame.cells) };
         } });
       };
       const choose = (start: number, size: number, selected: typeof lines) => {
@@ -212,8 +245,8 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
       };
       for (let count = 2; count <= lines.length; count += 1) choose(0, count, []);
     };
-    addLineRegionAccounting("row");
     addLineRegionAccounting("column");
+    addLineRegionAccounting("row");
     if (!moves.length) {
       const candidate = units.flatMap((unit) => unit.cells).find(([row, column]) => !viableWith([row, column]));
       if (candidate) {
