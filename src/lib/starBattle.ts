@@ -6,7 +6,7 @@
  */
 export type Coordinate = readonly [row: number, column: number];
 export type StarBattleSolution = Coordinate[];
-export type LogicalStep = { technique: string; detail: string; stars: StarBattleSolution; xs: StarBattleSolution; rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[] };
+export type LogicalStep = { technique: string; detail: string; stars: StarBattleSolution; xs: StarBattleSolution; rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[]; reframedGroups?: Coordinate[][] };
 
 export function solveStarBattleOne(regions: number[][], maxSolutions = 2): StarBattleSolution[] {
   const size = regions.length;
@@ -143,16 +143,76 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
     return attempt(assumed[0], assumed[1]);
   };
   const priority = (name: string) => techniqueOrder.findIndex((entry) => entry === name);
+  type UnitKind = "row" | "column" | "region";
+  type ChainFailure = { forcedRegions: number[]; exhausted: { kind: UnitKind; id: number } };
+  const forcedChainFailure = (assumed: Coordinate): ChainFailure | null => {
+    const traceStars = new Set(stars);
+    const traceXs = new Set(xs);
+    const traceHasStar = (predicate: (row: number, column: number) => boolean) => [...traceStars].some((value) => { const [row, column] = fromKey(value); return predicate(row, column); });
+    const traceCanStar = (row: number, column: number) => {
+      if (traceStars.has(key(row, column)) || traceXs.has(key(row, column))) return false;
+      if (traceHasStar((r) => r === row) || traceHasStar((_, c) => c === column) || traceHasStar((r, c) => regions[r][c] === regions[row][column])) return false;
+      return !traceHasStar((r, c) => Math.abs(r - row) <= 1 && Math.abs(c - column) <= 1);
+    };
+    const tracePlace = (row: number, column: number) => {
+      traceStars.add(key(row, column));
+      for (let r = 0; r < size; r += 1) for (let c = 0; c < size; c += 1) {
+        if (r === row || c === column || regions[r][c] === regions[row][column] || (Math.abs(r - row) <= 1 && Math.abs(c - column) <= 1)) if (!traceStars.has(key(r, c))) traceXs.add(key(r, c));
+      }
+    };
+    if (!traceCanStar(assumed[0], assumed[1])) return null;
+    tracePlace(assumed[0], assumed[1]);
+    const forcedRegions: number[] = [];
+    const buildTraceUnits = () => {
+      const traceUnits: { kind: UnitKind; id: number; cells: Coordinate[] }[] = [];
+      for (const region of regionIds) if (!traceHasStar((r, c) => regions[r][c] === region)) traceUnits.push({ kind: "region", id: region, cells: candidatesForTrace((r, c) => regions[r][c] === region) });
+      for (let row = 0; row < size; row += 1) if (!traceHasStar((r) => r === row)) traceUnits.push({ kind: "row", id: row, cells: candidatesForTrace((r) => r === row) });
+      for (let column = 0; column < size; column += 1) if (!traceHasStar((_, c) => c === column)) traceUnits.push({ kind: "column", id: column, cells: candidatesForTrace((_, c) => c === column) });
+      return traceUnits;
+    };
+    const candidatesForTrace = (predicate: (row: number, column: number) => boolean) => regions.flatMap((row, r) => row.flatMap((_, c) => predicate(r, c) && traceCanStar(r, c) ? [[r, c] as Coordinate] : []));
+    const chainOrder = { region: 0, row: 1, column: 2 } as const;
+    for (let guard = 0; guard < size * size; guard += 1) {
+      const traceUnits = buildTraceUnits();
+      const exhausted = traceUnits.find((unit) => !unit.cells.length);
+      if (exhausted) return { forcedRegions, exhausted: { kind: exhausted.kind, id: exhausted.id } };
+      const forced = traceUnits.filter((unit) => unit.cells.length === 1).sort((left, right) => chainOrder[left.kind] - chainOrder[right.kind])[0];
+      if (!forced) return null;
+      if (forced.kind === "region") forcedRegions.push(forced.id);
+      tracePlace(forced.cells[0][0], forced.cells[0][1]);
+    }
+    return null;
+  };
   const sees = (from: Coordinate, target: Coordinate) => {
     const [row, column] = from; const [targetRow, targetColumn] = target;
     return row === targetRow || column === targetColumn || regions[row][column] === regions[targetRow][targetColumn] || (Math.abs(row - targetRow) <= 1 && Math.abs(column - targetColumn) <= 1);
   };
   const coordinateList = (cells: Coordinate[]) => cells.map(([row, column]) => `R${row + 1}C${column + 1}`).join(", ");
   const xAdded = (count: number) => `${count} ${count === 1 ? "X is" : "Xs are"} added.`;
-  type ReframedUnit = { key: string; name: string; cells: Coordinate[]; rows: number[]; columns: number[] };
+  type ReframedUnit = { key: string; name: string; cells: Coordinate[]; rows: number[]; columns: number[]; relatedFrames?: Coordinate[][]; createdAt: number };
   const reframedUnits: ReframedUnit[] = [];
   const frameKey = (cells: Coordinate[]) => cells.map(([row, column]) => key(row, column)).sort().join("|");
+  const adjacentComponents = (cells: Coordinate[]) => {
+    const remaining = new Map(cells.map((cell) => [key(cell[0], cell[1]), cell]));
+    const components: Coordinate[][] = [];
+    while (remaining.size) {
+      const first = remaining.values().next().value as Coordinate;
+      const component: Coordinate[] = [first];
+      remaining.delete(key(first[0], first[1]));
+      for (let index = 0; index < component.length; index += 1) {
+        const [row, column] = component[index];
+        for (const [candidateKey, candidate] of remaining) {
+          if (Math.abs(row - candidate[0]) + Math.abs(column - candidate[1]) !== 1) continue;
+          component.push(candidate);
+          remaining.delete(candidateKey);
+        }
+      }
+      components.push(component);
+    }
+    return components;
+  };
   const steps: LogicalStep[] = [];
+  let hasReframedVisibilityDeduction = false;
   for (let guard = 0; guard < size * size * 3; guard += 1) {
     const units = unitCandidates();
     if (units.some((unit) => !unit.cells.length)) break;
@@ -203,7 +263,114 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
         cells: source.cells,
         rows: source.kind === "row" ? [source.id] : [],
         columns: source.kind === "column" ? [source.id] : [],
+        createdAt: guard,
       });
+    }
+    const discoverComplementFrames = (kind: "row" | "column") => {
+      const lines = units.filter((unit) => unit.kind === kind);
+      const inspectSelection = (selected: typeof lines) => {
+        const selectedIds = new Set(selected.map((line) => line.id));
+        const containedRegions = units.filter((unit) => unit.kind === "region" && unit.cells.length > 0 && unit.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
+        const containedRegionKeys = new Set(containedRegions.flatMap((region) => region.cells.map(([row, column]) => key(row, column))));
+        const containedFrames = reframedUnits.filter((frame) => !frame.cells.some(([row, column]) => stars.has(key(row, column))) && frame.cells.some(([row, column]) => canStar(row, column)) && frame.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)) && !frame.cells.some(([row, column]) => containedRegionKeys.has(key(row, column))));
+        const occupied = new Set<string>();
+        for (const unit of [...containedRegions, ...containedFrames]) for (const [row, column] of unit.cells) {
+          const cellKey = key(row, column);
+          if (occupied.has(cellKey)) return;
+          occupied.add(cellKey);
+        }
+        const neededStars = selected.length - containedRegions.length - containedFrames.length;
+        const remainder = [...new Map(selected.flatMap((line) => line.cells).filter(([row, column]) => !occupied.has(key(row, column))).map((cell) => [key(cell[0], cell[1]), cell])).values()];
+        const addFrame = (cells: Coordinate[], relatedFrames?: Coordinate[][], allowSingleRegion = false) => {
+          if (!allowSingleRegion && new Set(cells.map(([row, column]) => regions[row][column])).size < 2) return;
+          const derivedKey = frameKey(cells);
+          const rows = kind === "row" ? selected.map((line) => line.id) : [];
+          const columns = kind === "column" ? selected.map((line) => line.id) : [];
+          const existing = reframedUnits.find((unit) => unit.key === derivedKey);
+          if (existing) {
+            // The same frame can be rediscovered after later eliminations.
+            // Keep the smallest supporting line set for the walkthrough.
+            if (rows.length + columns.length < existing.rows.length + existing.columns.length) {
+              existing.rows = rows;
+              existing.columns = columns;
+              existing.relatedFrames = relatedFrames;
+            }
+            return;
+          }
+          reframedUnits.push({ key: derivedKey, name: `the reframed region formed by ${coordinateList(cells)}`, cells, rows, columns, relatedFrames, createdAt: guard });
+        };
+        const regionLockedKeys = new Set(containedRegions.flatMap((region) => region.cells.map(([row, column]) => key(row, column))));
+        const regionRemainder = [...new Map(selected.flatMap((line) => line.cells).filter(([row, column]) => !regionLockedKeys.has(key(row, column))).map((cell) => [key(cell[0], cell[1]), cell])).values()];
+        if (selected.length - containedRegions.length === 1 && regionRemainder.length >= 2) {
+          // A line complement can be a meaningful one-star shape even when it
+          // happens to sit within one original region.
+          addFrame(regionRemainder, undefined, true);
+        }
+        const addCliquePartition = (cells: Coordinate[]) => {
+          if (cells.length < 4 || cells.length > 12) return false;
+          const partitions: Coordinate[][][] = [];
+          const seenPartitions = new Set<string>();
+          const isClique = (group: Coordinate[]) => group.every((cell, index) => group.slice(index + 1).every((other) => sees(cell, other)));
+          const spansBothLines = (group: Coordinate[]) => new Set(group.map(([row, column]) => kind === "row" ? row : column)).size === 2;
+          for (let mask = 1; mask < (1 << cells.length) - 1; mask += 1) {
+            if (!(mask & 1)) continue;
+            const firstGroup = cells.filter((_, index) => mask & (1 << index));
+            const secondGroup = cells.filter((_, index) => !(mask & (1 << index)));
+            if (firstGroup.length < 2 || secondGroup.length < 2 || !spansBothLines(firstGroup) || !spansBothLines(secondGroup) || !isClique(firstGroup) || !isClique(secondGroup)) continue;
+            const partitionKey = [frameKey(firstGroup), frameKey(secondGroup)].sort().join("/");
+            if (seenPartitions.has(partitionKey)) continue;
+            seenPartitions.add(partitionKey);
+            partitions.push([firstGroup, secondGroup]);
+          }
+          const visibilityScore = (frameCells: Coordinate[]) => regions.flatMap((row, r) => row.flatMap((_, c) => {
+            const cell = [r, c] as Coordinate;
+            return !stars.has(key(r, c)) && !xs.has(key(r, c)) && !frameCells.some(([row, column]) => row === r && column === c) && frameCells.every((candidate) => sees(cell, candidate)) ? [cell] : [];
+          })).length;
+          const bestPartition = partitions.sort((left, right) => right.reduce((score, frameCells) => score + visibilityScore(frameCells), 0) - left.reduce((score, frameCells) => score + visibilityScore(frameCells), 0))[0];
+          bestPartition?.forEach((frameCells, index) => addFrame(frameCells, bestPartition.filter((_, otherIndex) => otherIndex !== index), true));
+          return Boolean(bestPartition);
+        };
+        const allLineCandidates = [...new Map(selected.flatMap((line) => line.cells).map((cell) => [key(cell[0], cell[1]), cell])).values()];
+        if (selected.length === 2 && addCliquePartition(allLineCandidates)) return;
+        if (neededStars === 1 && remainder.length >= 2) {
+          addFrame(remainder);
+          return;
+        }
+        if (neededStars !== 2 || remainder.length < 4) return;
+        addCliquePartition(remainder);
+      };
+      const choose = (start: number, count: number, selected: typeof lines) => {
+        if (selected.length === count) { inspectSelection(selected); return; }
+        for (let index = start; index <= lines.length - (count - selected.length); index += 1) choose(index + 1, count, [...selected, lines[index]]);
+      };
+      for (let count = 2; count <= lines.length; count += 1) choose(0, count, []);
+    };
+    discoverComplementFrames("row");
+    discoverComplementFrames("column");
+    for (const frame of reframedUnits) {
+      const candidatesInFrame = frame.cells.filter(([row, column]) => canStar(row, column));
+      if (candidatesInFrame.length < 2) continue;
+      const relatedFrames = (frame.relatedFrames ?? []).map((cells) => cells.filter(([row, column]) => canStar(row, column))).filter((cells) => cells.length >= 2);
+      const allFrames = [candidatesInFrame, ...relatedFrames];
+      const protectedFrameCells = new Set(allFrames.flat().map(([row, column]) => key(row, column)));
+        const focusedRows = frame.rows.length ? [...new Set(allFrames.flat().map(([row]) => row))] : [];
+        const focusedColumns = frame.columns.length ? [...new Set(allFrames.flat().map(([, column]) => column))] : [];
+      const visibleCells = regions.flatMap((row, r) => row.flatMap((_, c) => {
+        const cell = [r, c] as Coordinate;
+        return !stars.has(key(r, c)) && !xs.has(key(r, c)) && !protectedFrameCells.has(key(r, c)) && allFrames.some((frameCells) => frameCells.every((candidate) => sees(cell, candidate))) ? [cell] : [];
+      }));
+      if (!visibleCells.length) continue;
+      moves.push({ rank: Math.max(priority("Full-unit visibility"), priority("Reframed regions")), execute: () => {
+        visibleCells.forEach(([row, column]) => addX(row, column));
+        hasReframedVisibilityDeduction = true;
+        const state = snapshot();
+        const sourceLines = [...frame.rows.map((row) => `Row ${row + 1}`), ...frame.columns.map((column) => `Column ${column + 1}`)].join(" and ");
+        const frameExplanation = relatedFrames.length
+          ? `${sourceLines} contain ${allFrames.length} stars in total. Their remaining candidates split into ${allFrames.map((cells) => `a reframed region (${coordinateList(cells)})`).join(" and ")}; each contains one star.`
+          : `A reframed region is formed by ${coordinateList(candidatesInFrame)} and must contain one star.`;
+        const added = `${visibleCells.length} ${visibleCells.length === 1 ? "X is" : "Xs are"} added ${visibleCells.length === 1 ? "as it sees" : "as they each see"} all cells in the corresponding reframed region${allFrames.length === 1 ? "" : "s"}.`;
+        return { technique: "Reframed regions + Full-unit visibility", detail: `${frameExplanation} ${added}`, ...state, rows: focusedRows, columns: focusedColumns, cells: visibleCells, reframedCells: allFrames.flat(), reframedGroups: allFrames };
+      } });
     }
     const addLineRegionAccounting = (kind: "row" | "column") => {
       const lines = units.filter((unit) => unit.kind === kind);
@@ -211,7 +378,26 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
       const inspectSelection = (selected: typeof lines) => {
         const selectedIds = new Set(selected.map((line) => line.id));
         const containedRegions = regionUnits.filter((region) => region.cells.length > 0 && region.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
-        const containedFrames = reframedUnits.filter((frame) => !frame.cells.some(([row, column]) => stars.has(key(row, column))) && frame.cells.some(([row, column]) => canStar(row, column)) && frame.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
+        // Let a newly found frame settle through one visible deduction before
+        // using it for a wider accounting argument.
+        const candidateFrames = reframedUnits.filter((frame) => frame.createdAt < guard - 1).map((frame) => ({ ...frame, cells: frame.cells.filter(([row, column]) => canStar(row, column)) })).filter((frame) => frame.cells.length > 0 && frame.cells.every(([row, column]) => selectedIds.has(kind === "row" ? row : column)));
+        // If ordinary regions already account for every star in these lines,
+        // derived frames are irrelevant and must not block that simpler proof.
+        const regionKeys = new Set(containedRegions.flatMap((region) => region.cells.map(([row, column]) => key(row, column))));
+        const framesNeeded = selected.length - containedRegions.length;
+        const selectFrames = (start: number, chosen: typeof candidateFrames, occupied: Set<string>): typeof candidateFrames | null => {
+          if (chosen.length === framesNeeded) return chosen;
+          for (let index = start; index < candidateFrames.length; index += 1) {
+            const frame = candidateFrames[index];
+            if (frame.cells.some(([row, column]) => occupied.has(key(row, column)))) continue;
+            const nextOccupied = new Set(occupied);
+            frame.cells.forEach(([row, column]) => nextOccupied.add(key(row, column)));
+            const result = selectFrames(index + 1, [...chosen, frame], nextOccupied);
+            if (result) return result;
+          }
+          return null;
+        };
+        const containedFrames = framesNeeded <= 0 ? [] : selectFrames(0, [], regionKeys) ?? [];
         if (containedRegions.length + containedFrames.length !== selected.length) return;
         const occupiedLockedCells = new Set<string>();
         const lockedUnits = [...containedRegions, ...containedFrames];
@@ -227,16 +413,26 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
         const eliminations = selected.flatMap((line) => line.cells).filter(([row, column]) => !lockedRegionIds.has(regions[row][column]) && !lockedFrameCells.has(key(row, column)));
         if (!eliminations.length) return;
         const usesReframedRegion = containedFrames.length > 0;
-        moves.push({ rank: usesReframedRegion ? Math.max(priority("Line–region accounting"), priority("Reframed regions (squiggly regions)")) : priority("Line–region accounting"), execute: () => {
+        // Show a smaller reframed-visibility deduction first when available.
+        // It keeps a broad accounting sweep from concealing the shape that
+        // justifies a useful earlier elimination.
+        if (usesReframedRegion && !hasReframedVisibilityDeduction && selected.length >= Math.ceil(size / 2)) return;
+        const techniqueRank = usesReframedRegion ? Math.max(priority("Line–region accounting"), priority("Reframed regions")) : priority("Line–region accounting");
+        // Prefer a compact proof (no more than half the board) before a broad
+        // sweep. Within each tier, prefer the deduction that adds more Xs,
+        // then the one using fewer rows or columns.
+        const broadSweepPenalty = selected.length > Math.ceil(size / 2) ? 0.5 : 0;
+        const tieBreak = broadSweepPenalty + (size * size - eliminations.length * (size + 1) + selected.length) / (2 * size * size * (size + 1));
+        moves.push({ rank: techniqueRank + tieBreak, execute: () => {
           eliminations.forEach(([row, column]) => addX(row, column));
           const state = snapshot();
           const lineNames = selected.map((line) => line.name).join(" and ");
-          const lockedNames = [...containedRegions.map((region) => region.name), ...containedFrames.map((frame) => frame.name)].join(" and ");
-          const technique = usesReframedRegion ? "Reframed regions (squiggly regions) + Line–region accounting" : "Line–region accounting";
+          const lockedNames = [...containedRegions.map((region) => region.name), ...containedFrames.map((frame) => `the reframed region formed by ${coordinateList(frame.cells)}`)].join(" and ");
+          const technique = usesReframedRegion ? "Reframed regions + Line–region accounting" : "Line–region accounting";
           const detail = usesReframedRegion
             ? `A reframed region is formed by ${containedFrames.map((frame) => coordinateList(frame.cells)).join(" and ")}. ${lineNames} contain ${selected.length} stars in total. ${lockedNames} are ${selected.length} non-overlapping one-star units within these lines. ${xAdded(eliminations.length)}`
             : `${lineNames} contain ${selected.length} stars in total. ${lockedNames} each require one star and can only place them in these lines. ${xAdded(eliminations.length)}`;
-          return { technique, detail, ...state, rows: kind === "row" ? selected.map((line) => line.id) : [], columns: kind === "column" ? selected.map((line) => line.id) : [], regions: containedRegions.map((region) => region.id), cells: eliminations, reframedCells: containedFrames.flatMap((frame) => frame.cells) };
+          return { technique, detail, ...state, rows: kind === "row" ? selected.map((line) => line.id) : [], columns: kind === "column" ? selected.map((line) => line.id) : [], regions: containedRegions.map((region) => region.id), cells: eliminations, reframedCells: containedFrames.flatMap((frame) => frame.cells), reframedGroups: containedFrames.map((frame) => frame.cells) };
         } });
       };
       const choose = (start: number, size: number, selected: typeof lines) => {
@@ -247,11 +443,34 @@ export function solveWithLogicalTechniques(regions: number[][], techniqueOrder: 
     };
     addLineRegionAccounting("column");
     addLineRegionAccounting("row");
+    const chainGroups = new Map<string, { cells: Coordinate[]; failure: ChainFailure }>();
+    const seenCandidates = new Set<string>();
+    for (const unit of units) for (const cell of unit.cells) {
+      const cellKey = key(cell[0], cell[1]);
+      if (seenCandidates.has(cellKey)) continue;
+      seenCandidates.add(cellKey);
+      const failure = forcedChainFailure(cell);
+      if (!failure?.forcedRegions.length || failure.exhausted.kind !== "region") continue;
+      const groupKey = `${failure.forcedRegions.join(",")}:${failure.exhausted.kind}:${failure.exhausted.id}`;
+      const group = chainGroups.get(groupKey) ?? { cells: [], failure };
+      group.cells.push(cell);
+      chainGroups.set(groupKey, group);
+    }
+    for (const { cells, failure } of chainGroups.values()) for (const component of adjacentComponents(cells)) {
+      if (component.length < 2) continue;
+      moves.push({ rank: priority("Forced-chain propagation"), execute: () => {
+        component.forEach(([row, column]) => addX(row, column));
+        const state = snapshot();
+        const forcedRegion = failure.forcedRegions[0];
+        const forcedText = failure.forcedRegions.length === 1 ? `forces a star in region [[region:${forcedRegion}]]` : `forces stars in regions ${failure.forcedRegions.map((region) => `[[region:${region}]]`).join(", ")}`;
+        return { technique: "Forced-chain propagation", detail: `Any star in (${coordinateList(component)}) ${forcedText}, leaving region [[region:${failure.exhausted.id}]] with no possible star. ${xAdded(component.length)}`, ...state, regions: [...new Set([...failure.forcedRegions, failure.exhausted.id])], cells: component };
+      } });
+    }
     if (!moves.length) {
       const candidate = units.flatMap((unit) => unit.cells).find(([row, column]) => !viableWith([row, column]));
       if (candidate) {
         const [row, column] = candidate; addX(row, column); const state = snapshot();
-        steps.push({ technique: "Contradiction probe", detail: `Assuming a star at R${row + 1}C${column + 1} leaves no valid completion, so R${row + 1}C${column + 1} is an X.`, ...state, rows: [row], columns: [column], regions: [regions[row][column]], cells: [[row, column]] });
+        steps.push({ technique: "Contradiction", detail: `Assuming a star at R${row + 1}C${column + 1} leaves no valid completion, so R${row + 1}C${column + 1} is an X.`, ...state, rows: [row], columns: [column], regions: [regions[row][column]], cells: [[row, column]] });
         continue;
       }
       break;

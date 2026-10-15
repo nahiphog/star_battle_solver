@@ -19,7 +19,7 @@ const DEFAULT_REGIONS = [
 const cloneDefaultRegions = () => DEFAULT_REGIONS.map((row) => [...row]);
 type Technique = { name: string; tally: number; meaning: string };
 type Coordinate = [number, number];
-type WalkthroughHighlights = { rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[] };
+type WalkthroughHighlights = { rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[]; reframedGroups?: Coordinate[][] };
 type WalkthroughStep = { technique: string; detail: string; highlights?: WalkthroughHighlights };
 type WalkthroughSnapshot = { stars: StarBattleSolution; deductions: StarBattleSolution };
 type Page = "backtracking" | "techniques" | "technique-list";
@@ -30,8 +30,8 @@ const DEFAULT_TECHNIQUES: Technique[] = [
   { name: "Full-unit visibility", tally: 56, meaning: "A known star placement or allocation covers every remaining candidate in a region, row, or column, so those cells become Xs." },
   { name: "Line–region accounting", tally: 34, meaning: "Count stars across several rows/columns, subtract the stars reserved for identified regions, and constrain or eliminate the remainder." },
   { name: "Forced-chain propagation", tally: 17, meaning: "One forced star triggers a cascade of later forced placements and eliminations." },
-  { name: "Reframed regions (squiggly regions)", tally: 9, meaning: "Combine or partition portions of ordinary regions into a derived shape with a known star count." },
-  { name: "Contradiction probe", tally: 7, meaning: "Assume a candidate is a star, follow the consequences, and reject it because another region/line becomes impossible or stars would touch." },
+  { name: "Reframed regions", tally: 9, meaning: "Combine or partition portions of ordinary regions into a derived shape with a known star count." },
+  { name: "Contradiction", tally: 7, meaning: "Assume a candidate is a star, follow the consequences, and reject it because another region/line becomes impossible or stars would touch." },
   { name: "X-wing / four-corner contradiction", tally: 1, meaning: "The special four-corner pattern used in Rated G: any candidate in the pattern causes a contradictory chain." },
 ];
 const DEFAULT_WALKTHROUGH: WalkthroughStep[] = [
@@ -121,7 +121,9 @@ function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights, tech
   const highlightedColumns = new Set(highlights?.columns ?? []);
   const highlightedRegions = new Set(highlights?.regions ?? []);
   const highlightedCells = new Set((highlights?.cells ?? []).map(([row, column]) => `${row}:${column}`));
-  const reframedCells = new Set((highlights?.reframedCells ?? []).map(([row, column]) => `${row}:${column}`));
+  const reframedGroupByCell = new Map<string, number>();
+  const reframedGroups = highlights?.reframedGroups ?? (highlights?.reframedCells ? [highlights.reframedCells] : []);
+  reframedGroups.forEach((group, groupIndex) => group.forEach(([row, column]) => reframedGroupByCell.set(`${row}:${column}`, groupIndex)));
   return <div className="walkthrough-board">
     <div className="column-arrows" style={{ gridTemplateColumns: `repeat(${regions.length}, 1fr)` }} aria-hidden="true">{[...highlightedColumns].map((column) => <span key={column} style={{ gridColumn: column + 1 }}>↓</span>)}</div>
     <div className="column-labels" style={{ gridTemplateColumns: `repeat(${regions.length}, 1fr)` }} aria-label="Column numbers">{regions[0].map((_, column) => <span key={column}>{column + 1}</span>)}</div>
@@ -133,8 +135,9 @@ function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights, tech
       const isStar = stars.has(key);
       const isNew = isStar ? !priorStars.has(key) : eliminated.has(key) && !priorEliminated.has(key);
       const isHighlighted = highlightedRows.has(r) || highlightedColumns.has(c) || highlightedRegions.has(region) || highlightedCells.has(key);
-      const isReframedCell = reframedCells.has(key);
-      return <div key={key} className={`cell snapshot-cell ${isHighlighted ? "highlighted-unit" : ""} ${isReframedCell ? "reframed-cell" : ""} ${isStar || eliminated.has(key) ? isNew ? "new-mark" : "past-mark" : ""}`} style={{ background: PALETTE[(region - 1) % PALETTE.length] }}>{isReframedCell && <svg className="squiggle-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Squiggly reframed-region outline"><path d="M4 8 Q12 2 20 8 T36 8 T52 8 T68 8 T84 8 T96 8 L96 92 Q88 98 80 92 T64 92 T48 92 T32 92 T16 92 T4 92 L4 8" /></svg>}{isStar ? "★" : eliminated.has(key) ? "×" : ""}</div>;
+      const reframedGroup = reframedGroupByCell.get(key);
+      const isReframedCell = reframedGroup !== undefined;
+      return <div key={key} className={`cell snapshot-cell ${isHighlighted ? "highlighted-unit" : ""} ${isReframedCell ? `reframed-cell reframed-group-${reframedGroup % 4}` : ""} ${isStar || eliminated.has(key) ? isNew ? "new-mark" : "past-mark" : ""}`} style={{ background: PALETTE[(region - 1) % PALETTE.length] }}>{isReframedCell && <svg className="squiggle-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={`Squiggly reframed-region outline ${reframedGroup + 1}`}><path d="M4 8 Q12 2 20 8 T36 8 T52 8 T68 8 T84 8 T96 8 L96 92 Q88 98 80 92 T64 92 T48 92 T32 92 T16 92 T4 92 L4 8" /></svg>}{isStar ? "★" : eliminated.has(key) ? "×" : ""}</div>;
       }))}
     </div>
   </div>;
@@ -212,7 +215,7 @@ export default function App() {
       return;
     }
     const logicalSteps = solveWithLogicalTechniques(regions, techniques.map((technique) => technique.name));
-    const steps: WalkthroughStep[] = [{ technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." }, ...logicalSteps.map((step) => ({ technique: step.technique, detail: step.detail, highlights: { rows: step.rows, columns: step.columns, regions: step.regions, cells: step.cells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedCells: step.reframedCells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined } }))];
+    const steps: WalkthroughStep[] = [{ technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." }, ...logicalSteps.map((step) => ({ technique: step.technique, detail: step.detail, highlights: { rows: step.rows, columns: step.columns, regions: step.regions, cells: step.cells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedCells: step.reframedCells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedGroups: step.reframedGroups?.map((group) => group.map(([row, column]) => [row, column]) as Coordinate[]) } }))];
     setWalkthrough(steps);
     setWalkthroughSnapshots([{ stars: [], deductions: [] }, ...logicalSteps.map((step) => ({ stars: step.stars, deductions: step.xs }))]);
     setWalkthroughProgress(0);
@@ -259,10 +262,6 @@ export default function App() {
       <button className={page === "technique-list" ? "active-page" : ""} onClick={() => navigate("technique-list")}>Technique list</button>
     </nav>
 
-    {page === "techniques" && <section className="technique-page">
-      <h2>Solve with given techniques</h2>
-      <p>The solver uses the saved priority order from the Technique list page. It records only deductions it can justify.</p>
-    </section>}
     {page === "technique-list" && <section className="technique-page">
       <h2>Technique list</h2>
       <p>This priority list is consulted from top to bottom whenever a technique-based solve is attempted. Use the arrows to set the order you want.</p>
