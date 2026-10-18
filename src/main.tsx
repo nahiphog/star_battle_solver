@@ -25,6 +25,14 @@ type WalkthroughSnapshot = { stars: StarBattleSolution; deductions: StarBattleSo
 type Page = "backtracking" | "techniques" | "technique-list";
 const routeToPage = (path: string): Page => path === "/solve_via_backtracking" ? "backtracking" : path === "/technique_list" ? "technique-list" : "techniques";
 const pageToRoute: Record<Page, string> = { backtracking: "/solve_via_backtracking", techniques: "/solve_with_given_techniques", "technique-list": "/technique_list" };
+
+// GitHub Pages is a static host. Its 404 page saves a direct-link route here
+// before returning visitors to the Vite entry point, so refreshes still work.
+const githubPagesRedirect = sessionStorage.getItem("star-battle-pages-redirect");
+if (githubPagesRedirect) {
+  sessionStorage.removeItem("star-battle-pages-redirect");
+  window.history.replaceState({}, "", githubPagesRedirect);
+}
 const DEFAULT_TECHNIQUES: Technique[] = [
   { name: "Forced star", tally: 21, meaning: "A row, column, region, or intersection has only one viable place left for its required star." },
   { name: "Full-unit visibility", tally: 56, meaning: "A known star placement or allocation covers every remaining candidate in a region, row, or column, so those cells become Xs." },
