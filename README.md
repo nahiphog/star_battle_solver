@@ -23,6 +23,12 @@ in each row, column, and region.
   Solve with techniques loads and solves a copy of the generated regions using
   your technique order, then opens the walkthrough at step 0. All
   generated sizes through 13×13 are supported by the solver editor and importer.
+  Each generated puzzle is rated in a separate background worker using a fixed
+  technique order: Easy (forced stars), Medium (visibility/accounting), Hard
+  (chains/reframed regions), or Expert (contradiction). The hardest technique
+  used determines the estimate; it is not proof of the minimum required technique.
+  The page lists technique counts and step count. Incomplete, failed, or timed-out
+  analyses (30 seconds) are Unrated, without affecting the puzzle's uniqueness.
 
 The backtracking approach is adapted from Solver Sanctuary's public
 `starBattleSolve` implementation, restricted to one star per unit.

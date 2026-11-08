@@ -5,6 +5,7 @@ import { gridString, matrixString, solveStarBattleOne, solveWithLogicalTechnique
 import "./styles.css";
 import { GENERATION_SIZES, type GeneratedPuzzle } from "./lib/puzzleGeneration";
 import { createRoutes, type Page } from "./lib/routes";
+import type { DifficultyRating } from "./lib/puzzleDifficulty";
 
 // First ten colors match Star Battle Studio's published REGION_PALETTE.
 const PALETTE = ["#7b7ac6", "#887360", "#8ba065", "#b48664", "#ceb46a", "#b1727a", "#8094cf", "#909b9f", "#b4735a", "#8860b6", "#65aaa0", "#c285ae", "#a7b75b"];
@@ -160,6 +161,32 @@ export default function App() {
   const [generationAttempts, setGenerationAttempts] = useState(0);
   const [generationRepairs, setGenerationRepairs] = useState(0);
   const [generationError, setGenerationError] = useState("");
+  const [difficulty, setDifficulty] = useState<DifficultyRating | null>(null);
+  const [analysingDifficulty, setAnalysingDifficulty] = useState(true);
+  useEffect(() => {
+    if (!generatedPuzzle || generating) return;
+    setAnalysingDifficulty(true);
+    let active = true;
+    let worker: Worker | undefined;
+    let timeout: number | undefined;
+    const finish = (rating: DifficultyRating) => {
+      if (!active) return;
+      active = false;
+      window.clearTimeout(timeout);
+      worker?.terminate();
+      setDifficulty(rating);
+      setAnalysingDifficulty(false);
+    };
+    const unrated = (explanation: string): DifficultyRating => ({ label: "Unrated", explanation, steps: 0, techniques: [] });
+    try {
+      worker = new Worker(new URL("./lib/puzzleDifficulty.worker.ts", import.meta.url), { type: "module" });
+      worker.onmessage = (event: MessageEvent<DifficultyRating>) => finish(event.data);
+      worker.onerror = () => finish(unrated("Difficulty analysis could not be completed."));
+      timeout = window.setTimeout(() => finish(unrated("Difficulty analysis exceeded 30 seconds. No difficulty rating was assigned.")), 30_000);
+      worker.postMessage(generatedPuzzle.regions);
+    } catch { finish(unrated("Difficulty analysis could not be started.")); }
+    return () => { active = false; window.clearTimeout(timeout); worker?.terminate(); };
+  }, [generatedPuzzle, generating]);
   useEffect(() => {
     if (!generating || page !== "generation") return;
     let worker: Worker | undefined;
@@ -335,6 +362,16 @@ export default function App() {
             : `Generated a unique ${generationSize} × ${generationSize} puzzle with ${generationSize} connected regions. Exactly one solution verified after ${generationAttempts} ${generationAttempts === 1 ? "attempt" : "attempts"}.`)}
         </p>}
         {generatedPuzzle && <>
+          <div className="difficulty-rating" aria-label="Puzzle difficulty" aria-busy={generating || analysingDifficulty}>
+            <strong>Difficulty: {generating ? "Pending new puzzle" : analysingDifficulty ? "Analysing…" : difficulty?.label ?? "Unrated"}</strong>
+            {difficulty && <div style={{ visibility: generating || analysingDifficulty ? "hidden" : "visible" }} aria-hidden={generating || analysingDifficulty}>
+              <p>{difficulty.explanation}</p>
+              {difficulty.techniques.length > 0 && <details><summary>Techniques used · {difficulty.steps} steps</summary>
+                <ul>{difficulty.techniques.map(({ name, count }) => <li key={name}>{name}: {count}</li>)}</ul>
+              </details>}
+            </div>}
+            <p className="hint">Estimated from a fixed technique order: Easy — forced stars; Medium — visibility or accounting; Hard — chains or reframed regions; Expert — contradiction. This describes the solver’s path, not a proven minimum difficulty.</p>
+          </div>
           <div id="generated-puzzle-grid" className="generation-grid" style={{ gridTemplateColumns: `repeat(${generationSize}, 1fr)` }} role="img" aria-busy={generating} aria-label={`Generated ${generationSize} by ${generationSize} puzzle, solution ${showGeneratedSolution ? "shown" : "hidden"}`}>
             {generatedPuzzle.regions.flatMap((row, r) => row.map((region, c) => <div key={`${r}-${c}`} className="cell result-cell" title={`Row ${r + 1}, column ${c + 1}, region ${region}`} style={{
               background: PALETTE[region - 1],

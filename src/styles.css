@@ -4,6 +4,9 @@
 .generation-grid .cell { aspect-ratio: auto; }
 .generation-button { min-width: 9rem; justify-content: center; }
 .status.generation-status { min-height: 4.5em; line-height: 1.5; }
+.difficulty-rating { margin: 0 0 18px; padding: 14px; border: 1px solid #e6e2dc; border-radius: 8px; background: #fbfaf7; }
+.difficulty-rating p { margin: 8px 0; }
+.difficulty-rating summary { cursor: pointer; }
 * { box-sizing: border-box; } body { margin: 0; } button, select { font: inherit; } button { cursor: pointer; }
 main { width: min(900px, calc(100% - 32px)); margin: 0 auto; padding: 58px 0 36px; }
 header { max-width: 720px; } .eyebrow { color: #9c4b30; font-size: .83rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
