@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { Check, Clipboard, Download, RotateCcw } from "lucide-react";
 import { gridString, matrixString, solveStarBattleOne, solveWithLogicalTechniques, type StarBattleSolution } from "./lib/starBattle";
 import "./styles.css";
+import { GENERATION_SIZES, type GeneratedPuzzle } from "./lib/puzzleGeneration";
+import { createRoutes, type Page } from "./lib/routes";
 
 // Kept in the same order as Star Battle Studio's published REGION_PALETTE.
 const PALETTE = ["#7b7ac6", "#887360", "#8ba065", "#b48664", "#ceb46a", "#b1727a", "#8094cf", "#909b9f", "#b4735a", "#8860b6"];
@@ -22,9 +24,7 @@ type Coordinate = [number, number];
 type WalkthroughHighlights = { rows?: number[]; columns?: number[]; regions?: number[]; cells?: Coordinate[]; reframedCells?: Coordinate[]; reframedGroups?: Coordinate[][] };
 type WalkthroughStep = { technique: string; detail: string; highlights?: WalkthroughHighlights };
 type WalkthroughSnapshot = { stars: StarBattleSolution; deductions: StarBattleSolution };
-type Page = "backtracking" | "techniques" | "technique-list";
-const routeToPage = (path: string): Page => path === "/solve_via_backtracking" ? "backtracking" : path === "/technique_list" ? "technique-list" : "techniques";
-const pageToRoute: Record<Page, string> = { backtracking: "/solve_via_backtracking", techniques: "/solve_with_given_techniques", "technique-list": "/technique_list" };
+const { routeToPage, pageToRoute } = createRoutes(import.meta.env.BASE_URL);
 
 // GitHub Pages is a static host. Its 404 page saves a direct-link route here
 // before returning visitors to the Vite entry point, so refreshes still work.
@@ -153,6 +153,33 @@ function WalkthroughGrid({ regions, snapshot, previousSnapshot, highlights, tech
 
 export default function App() {
   const [page, setPage] = useState<Page>(() => routeToPage(window.location.pathname));
+  const [generationSize, setGenerationSize] = useState(7);
+  const [generatedPuzzle, setGeneratedPuzzle] = useState<GeneratedPuzzle | null>(null);
+  const [showGeneratedSolution, setShowGeneratedSolution] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generationAttempts, setGenerationAttempts] = useState(0);
+  const [generationRepairs, setGenerationRepairs] = useState(0);
+  const [generationError, setGenerationError] = useState("");
+  useEffect(() => {
+    if (!generating || page !== "generation") return;
+    let worker: Worker | undefined;
+    let active = true;
+    const fail = (message: string) => { if (!active) return; setGenerationError(message); setGenerating(false); worker?.terminate(); };
+    try {
+      worker = new Worker(new URL("./lib/puzzleGeneration.worker.ts", import.meta.url), { type: "module" });
+      worker.onmessage = (event: MessageEvent<{ puzzle?: GeneratedPuzzle; attempts?: number; repairs?: number; error?: string }>) => {
+        if (!active) return;
+        if (event.data.error) { fail(event.data.error); return; }
+        setGenerationAttempts(event.data.attempts ?? 0);
+        setGenerationRepairs(event.data.repairs ?? 0);
+        if (event.data.puzzle) { setGeneratedPuzzle(event.data.puzzle); setGenerating(false); worker?.terminate(); }
+      };
+      worker.onerror = () => fail("Puzzle generation failed. Please try again.");
+      worker.postMessage(generationSize);
+    } catch { fail("Could not start puzzle generation. Please try again."); }
+    return () => { active = false; worker?.terminate(); };
+  }, [generating, generationSize, page]);
+  useEffect(() => { setGenerating(false); }, [page, generationSize]);
   const [size, setSize] = useState(7);
   const [regions, setRegions] = useState(cloneDefaultRegions);
   const [solutions, setSolutions] = useState<StarBattleSolution[] | null>(null);
@@ -268,8 +295,31 @@ export default function App() {
       <button className={page === "backtracking" ? "active-page" : ""} onClick={() => navigate("backtracking")}>Solve via backtracking</button>
       <button className={page === "techniques" ? "active-page" : ""} onClick={() => navigate("techniques")}>Solve with given techniques</button>
       <button className={page === "technique-list" ? "active-page" : ""} onClick={() => navigate("technique-list")}>Technique list</button>
+      <button className={page === "generation" ? "active-page" : ""} onClick={() => navigate("generation")}>Puzzle generation</button>
     </nav>
 
+    {page === "generation" ? <section className="workspace" aria-label="Puzzle generation">
+      <h2>Puzzle generation</h2>
+      <div className="toolbar">
+        <label>Grid size <select value={generationSize} onChange={(event) => { setGenerationSize(Number(event.target.value)); setGeneratedPuzzle(null); setShowGeneratedSolution(false); }}>{GENERATION_SIZES.map((value) => <option key={value} value={value}>{value} × {value}</option>)}</select></label>
+        <button className="solve" disabled={generating} onClick={() => { setGeneratedPuzzle(null); setShowGeneratedSolution(false); setGenerationAttempts(0); setGenerationRepairs(0); setGenerationError(""); setGenerating(true); }}>{generating ? "Generating…" : "Generate"}</button>
+        {generatedPuzzle && <button aria-pressed={showGeneratedSolution} aria-controls="generated-puzzle-grid" onClick={() => setShowGeneratedSolution(current => !current)}>{showGeneratedSolution ? "Hide solution" : "Show solution"}</button>}
+      </div>
+      <div aria-live="polite">
+        {generating && <p className="status">Searching for a unique puzzle… {generationAttempts} starting grids, {generationRepairs} boundary improvements.</p>}
+        {generationError && <p className="status error">{generationError}</p>}
+        {generatedPuzzle && <>
+          <p className="status">Generated a unique {generationSize} × {generationSize} puzzle with {generationSize} connected regions. Exactly one solution verified after {generationAttempts} {generationAttempts === 1 ? "attempt" : "attempts"}.</p>
+          <div id="generated-puzzle-grid" className="generation-grid" style={{ gridTemplateColumns: `repeat(${generationSize}, 1fr)` }} role="img" aria-label={`Generated ${generationSize} by ${generationSize} puzzle, solution ${showGeneratedSolution ? "shown" : "hidden"}`}>
+            {generatedPuzzle.regions.flatMap((row, r) => row.map((region, c) => <div key={`${r}-${c}`} className="cell result-cell" title={`Row ${r + 1}, column ${c + 1}, region ${region}`} style={{
+              background: [...PALETTE, "#65aaa0", "#c285ae", "#a7b75b"][region - 1],
+              borderTopWidth: r > 0 && generatedPuzzle.regions[r - 1][c] !== region ? 3 : 1,
+              borderLeftWidth: c > 0 && row[c - 1] !== region ? 3 : 1,
+            }}>{showGeneratedSolution && generatedPuzzle.stars[r][1] === c ? "★" : ""}</div>))}
+          </div>
+        </>}
+      </div>
+    </section> : <>
     {page === "technique-list" && <section className="technique-page">
       <h2>Technique list</h2>
       <p>This priority list is consulted from top to bottom whenever a technique-based solve is attempted. Use the arrows to set the order you want.</p>
@@ -337,6 +387,7 @@ export default function App() {
     </section>
 
     {solutions && solutions.length > 0 && <section className="results"><h2>{solutions.length === 1 ? "Completed grid" : "Two possible completed grids"}</h2><div className="solutions">{solutions.map((solution, index) => <SolutionGrid key={index} regions={regions} solution={solution} label={`Solution ${index + 1}`} />)}</div></section>}
+    </>}
     <footer>Backtracking logic adapted from the public Solver Sanctuary implementation. Star Battle 1 only.</footer>
   </main>;
 }

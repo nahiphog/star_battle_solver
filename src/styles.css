@@ -1,4 +1,7 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #1d1d28; background: #fbfaf7; }
+.page-nav { flex-wrap: wrap; }
+.generation-grid { display: grid; width: min(100%, 510px); aspect-ratio: 1; border: 3px solid #332d2b; grid-auto-rows: 1fr; }
+.generation-grid .cell { aspect-ratio: auto; }
 * { box-sizing: border-box; } body { margin: 0; } button, select { font: inherit; } button { cursor: pointer; }
 main { width: min(900px, calc(100% - 32px)); margin: 0 auto; padding: 58px 0 36px; }
 header { max-width: 720px; } .eyebrow { color: #9c4b30; font-size: .83rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
