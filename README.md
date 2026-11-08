@@ -20,6 +20,9 @@ in each row, column, and region.
   the page responsive. Changing size or leaving the page cancels the search.
   Stars are hidden by default. Use Show solution to reveal them or Hide solution
   to hide them again. Generating a new puzzle resets the solution to hidden.
+  Solve with techniques loads a copy of the generated regions into the technique
+  solver, preserving your technique order and clearing previous results. All
+  generated sizes through 13×13 are supported by the solver editor and importer.
 
 The backtracking approach is adapted from Solver Sanctuary's public
 `starBattleSolve` implementation, restricted to one star per unit.

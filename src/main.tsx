@@ -6,8 +6,8 @@ import "./styles.css";
 import { GENERATION_SIZES, type GeneratedPuzzle } from "./lib/puzzleGeneration";
 import { createRoutes, type Page } from "./lib/routes";
 
-// Kept in the same order as Star Battle Studio's published REGION_PALETTE.
-const PALETTE = ["#7b7ac6", "#887360", "#8ba065", "#b48664", "#ceb46a", "#b1727a", "#8094cf", "#909b9f", "#b4735a", "#8860b6"];
+// First ten colors match Star Battle Studio's published REGION_PALETTE.
+const PALETTE = ["#7b7ac6", "#887360", "#8ba065", "#b48664", "#ceb46a", "#b1727a", "#8094cf", "#909b9f", "#b4735a", "#8860b6", "#65aaa0", "#c285ae", "#a7b75b"];
 const makeGrid = (size: number) => Array.from({ length: size }, () => Array<number>(size).fill(0));
 const DEFAULT_REGIONS = [
   [1, 2, 2, 2, 2, 2, 3],
@@ -199,6 +199,17 @@ export default function App() {
   useEffect(() => { const onPopState = () => setPage(routeToPage(window.location.pathname)); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
 
   const clearWalkthrough = () => { setWalkthrough([]); setWalkthroughSnapshots([]); setWalkthroughProgress(0); };
+  const loadGeneratedIntoTechniques = () => {
+    if (!generatedPuzzle) return;
+    setSize(generatedPuzzle.regions.length);
+    setRegions(generatedPuzzle.regions.map(row => [...row]));
+    setActiveRegion(1);
+    setSolutions(null);
+    setCopied(null);
+    clearWalkthrough();
+    setMessage("Generated puzzle loaded. Click Solve with this technique order to start the walkthrough.");
+    navigate("techniques");
+  };
   const changeSize = (nextSize: number) => { setSize(nextSize); setRegions(makeGrid(nextSize)); setActiveRegion(1); setSolutions(null); clearWalkthrough(); setMessage("New blank board ready. Pick a region number, then paint its cells."); };
   const paint = (row: number, column: number) => {
     setRegions((current) => current.map((cells, r) => cells.map((value, c) => r === row && c === column ? activeRegion : value)));
@@ -206,8 +217,8 @@ export default function App() {
     clearWalkthrough();
   };
   const loadRegions = (candidate: unknown) => {
-    if (!Array.isArray(candidate) || candidate.length < 4 || candidate.length > 10 || !candidate.every(Array.isArray)) {
-      setMessage("Import a square grid between 4×4 and 10×10."); return;
+    if (!Array.isArray(candidate) || candidate.length < 4 || candidate.length > 13 || !candidate.every(Array.isArray)) {
+      setMessage("Import a square grid between 4×4 and 13×13."); return;
     }
     const imported = candidate.map((row) => (row as unknown[]).map(Number));
     const importedSize = imported.length;
@@ -302,17 +313,20 @@ export default function App() {
       <h2>Puzzle generation</h2>
       <div className="toolbar">
         <label>Grid size <select value={generationSize} onChange={(event) => { setGenerationSize(Number(event.target.value)); setGeneratedPuzzle(null); setShowGeneratedSolution(false); }}>{GENERATION_SIZES.map((value) => <option key={value} value={value}>{value} × {value}</option>)}</select></label>
-        <button className="solve" disabled={generating} onClick={() => { setGeneratedPuzzle(null); setShowGeneratedSolution(false); setGenerationAttempts(0); setGenerationRepairs(0); setGenerationError(""); setGenerating(true); }}>{generating ? "Generating…" : "Generate"}</button>
-        {generatedPuzzle && <button aria-pressed={showGeneratedSolution} aria-controls="generated-puzzle-grid" onClick={() => setShowGeneratedSolution(current => !current)}>{showGeneratedSolution ? "Hide solution" : "Show solution"}</button>}
+        <button className="solve generation-button" disabled={generating} onClick={() => { setShowGeneratedSolution(false); setGenerationAttempts(0); setGenerationRepairs(0); setGenerationError(""); setGenerating(true); }}>{generating ? "Generating…" : "Generate"}</button>
+        {generatedPuzzle && <button className="generation-button" disabled={generating} aria-pressed={showGeneratedSolution} aria-controls="generated-puzzle-grid" onClick={() => setShowGeneratedSolution(current => !current)}>{showGeneratedSolution ? "Hide solution" : "Show solution"}</button>}
+        {generatedPuzzle && <button disabled={generating} onClick={loadGeneratedIntoTechniques}>Solve with techniques</button>}
       </div>
       <div aria-live="polite">
-        {generating && <p className="status">Searching for a unique puzzle… {generationAttempts} starting grids, {generationRepairs} boundary improvements.</p>}
-        {generationError && <p className="status error">{generationError}</p>}
+        {(generating || generationError || generatedPuzzle) && <p className={`status generation-status ${generationError ? "error" : ""}`}>
+          {generationError || (generating
+            ? `Searching for a unique puzzle… ${generationAttempts} starting grids, ${generationRepairs} boundary improvements.`
+            : `Generated a unique ${generationSize} × ${generationSize} puzzle with ${generationSize} connected regions. Exactly one solution verified after ${generationAttempts} ${generationAttempts === 1 ? "attempt" : "attempts"}.`)}
+        </p>}
         {generatedPuzzle && <>
-          <p className="status">Generated a unique {generationSize} × {generationSize} puzzle with {generationSize} connected regions. Exactly one solution verified after {generationAttempts} {generationAttempts === 1 ? "attempt" : "attempts"}.</p>
-          <div id="generated-puzzle-grid" className="generation-grid" style={{ gridTemplateColumns: `repeat(${generationSize}, 1fr)` }} role="img" aria-label={`Generated ${generationSize} by ${generationSize} puzzle, solution ${showGeneratedSolution ? "shown" : "hidden"}`}>
+          <div id="generated-puzzle-grid" className="generation-grid" style={{ gridTemplateColumns: `repeat(${generationSize}, 1fr)` }} role="img" aria-busy={generating} aria-label={`Generated ${generationSize} by ${generationSize} puzzle, solution ${showGeneratedSolution ? "shown" : "hidden"}`}>
             {generatedPuzzle.regions.flatMap((row, r) => row.map((region, c) => <div key={`${r}-${c}`} className="cell result-cell" title={`Row ${r + 1}, column ${c + 1}, region ${region}`} style={{
-              background: [...PALETTE, "#65aaa0", "#c285ae", "#a7b75b"][region - 1],
+              background: PALETTE[region - 1],
               borderTopWidth: r > 0 && generatedPuzzle.regions[r - 1][c] !== region ? 3 : 1,
               borderLeftWidth: c > 0 && row[c - 1] !== region ? 3 : 1,
             }}>{showGeneratedSolution && generatedPuzzle.stars[r][1] === c ? "★" : ""}</div>))}
@@ -330,7 +344,7 @@ export default function App() {
 
     <section className="workspace" aria-label="Puzzle input">
       <div className="toolbar">
-        <label>Grid size <select value={size} onChange={(event) => changeSize(Number(event.target.value))}>{[4, 5, 6, 7, 8, 9, 10].map((value) => <option key={value} value={value}>{value} × {value}</option>)}</select></label>
+        <label>Grid size <select value={size} onChange={(event) => changeSize(Number(event.target.value))}>{[4, 5, 6, ...GENERATION_SIZES].map((value) => <option key={value} value={value}>{value} × {value}</option>)}</select></label>
         <span className="region-status">{regionCount}/{size} regions</span>
         <button className="secondary" onClick={() => { setSize(7); setRegions(cloneDefaultRegions()); setActiveRegion(1); setSolutions(null); clearWalkthrough(); setMessage("Default 7×7 puzzle restored."); }}> <RotateCcw size={16} /> Restore default grid</button>
       </div>
