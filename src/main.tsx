@@ -190,6 +190,12 @@ export default function App() {
   const [walkthrough, setWalkthrough] = useState<WalkthroughStep[]>([]);
   const [walkthroughSnapshots, setWalkthroughSnapshots] = useState<WalkthroughSnapshot[]>([]);
   const [walkthroughProgress, setWalkthroughProgress] = useState(0);
+  const [openWalkthrough, setOpenWalkthrough] = useState(false);
+  useEffect(() => {
+    if (!openWalkthrough || page !== "techniques" || !walkthrough.length) return;
+    document.getElementById("solution-walkthrough")?.scrollIntoView({ block: "start" });
+    setOpenWalkthrough(false);
+  }, [openWalkthrough, page, walkthrough]);
   const regionCount = useMemo(() => new Set(regions.flat().filter(Boolean)).size, [regions]);
   const walkthroughTally = useMemo(() => [...walkthrough.reduce((counts, step) => {
     if (step.technique !== "Initial grid") for (const technique of step.technique.split(" + ")) counts.set(technique, (counts.get(technique) ?? 0) + 1);
@@ -201,14 +207,17 @@ export default function App() {
   const clearWalkthrough = () => { setWalkthrough([]); setWalkthroughSnapshots([]); setWalkthroughProgress(0); };
   const loadGeneratedIntoTechniques = () => {
     if (!generatedPuzzle) return;
-    setSize(generatedPuzzle.regions.length);
-    setRegions(generatedPuzzle.regions.map(row => [...row]));
+    const generatedRegions = generatedPuzzle.regions.map(row => [...row]);
+    setSize(generatedRegions.length);
+    setRegions(generatedRegions);
     setActiveRegion(1);
     setSolutions(null);
     setCopied(null);
     clearWalkthrough();
-    setMessage("Generated puzzle loaded. Click Solve with this technique order to start the walkthrough.");
     navigate("techniques");
+    // Pass the board explicitly: React has not applied setRegions yet.
+    solveWithTechniques(generatedRegions);
+    setOpenWalkthrough(true);
   };
   const changeSize = (nextSize: number) => { setSize(nextSize); setRegions(makeGrid(nextSize)); setActiveRegion(1); setSolutions(null); clearWalkthrough(); setMessage("New blank board ready. Pick a region number, then paint its cells."); };
   const paint = (row: number, column: number) => {
@@ -248,24 +257,26 @@ export default function App() {
     [next[index], next[destination]] = [next[destination], next[index]];
     return next;
   });
-  const solveWithTechniques = () => {
-    if (regionCount !== size) { setMessage(`A ${size}×${size} Star Battle 1 board needs exactly ${size} regions; this grid has ${regionCount}.`); return; }
-    const found = solveStarBattleOne(regions);
+  const solveWithTechniques = (board = regions) => {
+    const boardSize = board.length;
+    const boardRegionCount = new Set(board.flat().filter(Boolean)).size;
+    if (boardRegionCount !== boardSize) { setMessage(`A ${boardSize}×${boardSize} Star Battle 1 board needs exactly ${boardSize} regions; this grid has ${boardRegionCount}.`); return; }
+    const found = solveStarBattleOne(board);
     setSolutions(found);
     if (!found.length) { setWalkthrough([]); setWalkthroughSnapshots([]); setMessage("No valid solution found."); return; }
-    if (JSON.stringify(regions) === JSON.stringify(DEFAULT_REGIONS)) {
+    if (JSON.stringify(board) === JSON.stringify(DEFAULT_REGIONS)) {
       setWalkthrough(DEFAULT_WALKTHROUGH);
       setWalkthroughSnapshots(DEFAULT_SNAPSHOTS);
       setWalkthroughProgress(0);
       setMessage("Unique solution found with the authored 11-step walkthrough.");
       return;
     }
-    const logicalSteps = solveWithLogicalTechniques(regions, techniques.map((technique) => technique.name));
+    const logicalSteps = solveWithLogicalTechniques(board, techniques.map((technique) => technique.name));
     const steps: WalkthroughStep[] = [{ technique: "Initial grid", detail: "This is the starting position. No stars or Xs have been placed yet." }, ...logicalSteps.map((step) => ({ technique: step.technique, detail: step.detail, highlights: { rows: step.rows, columns: step.columns, regions: step.regions, cells: step.cells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedCells: step.reframedCells?.map(([row, column]) => [row, column]) as Coordinate[] | undefined, reframedGroups: step.reframedGroups?.map((group) => group.map(([row, column]) => [row, column]) as Coordinate[]) } }))];
     setWalkthrough(steps);
     setWalkthroughSnapshots([{ stars: [], deductions: [] }, ...logicalSteps.map((step) => ({ stars: step.stars, deductions: step.xs }))]);
     setWalkthroughProgress(0);
-    const solvedLogically = logicalSteps.at(-1)?.stars.length === size;
+    const solvedLogically = logicalSteps.at(-1)?.stars.length === boardSize;
     setMessage(solvedLogically ? (found.length === 1 ? "Unique solution found with a deduction-only walkthrough." : "Two solutions exist; this walkthrough follows valid deductions only.") : "The backtracker found a solution, but the selected logical techniques reached no further justified deduction.");
   };
   const solve = () => {
@@ -364,12 +375,12 @@ export default function App() {
       <div className="puzzle-actions">
         <button className="secondary" onClick={() => { setRegions(makeGrid(size)); setActiveRegion(1); setSolutions(null); clearWalkthrough(); setMessage("Grid reset. Every cell is now region 0."); }}>Reset grid</button>
         <button className="solve" onClick={solve}>Solve puzzle</button>
-        {page === "techniques" && <button className="solve" onClick={solveWithTechniques}>Solve with this technique order</button>}
+        {page === "techniques" && <button className="solve" onClick={() => solveWithTechniques()}>Solve with this technique order</button>}
       </div>
       <p className={`status ${solutions?.length === 0 ? "error" : ""}`}>{message}</p>
     </section>
 
-    {page === "techniques" && walkthrough.length > 0 && <section className="walkthrough technique-page">
+    {page === "techniques" && walkthrough.length > 0 && <section id="solution-walkthrough" className="walkthrough technique-page">
       <h3>Interactive solution walkthrough</h3>
       <div className="technique-tally" aria-label="Techniques used"><strong>Techniques used</strong>{walkthroughTally.map(([technique, count]) => <span key={technique}>{technique}: <b>{count}</b></span>)}</div>
       <div className="walkthrough-player">
